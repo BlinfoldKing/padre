@@ -19,6 +19,11 @@ type TableSchema struct {
 	ColumnDefault          *string
 }
 
+type Table struct {
+	TableName  string
+	PrimaryKey string
+}
+
 func main() {
 	args := os.Args[1:]
 	if len(args) < 1 {
@@ -34,10 +39,7 @@ func main() {
 		panic(err)
 	}
 
-	var tables []struct {
-		TableName  string
-		PrimaryKey string
-	}
+	var tables []Table
 
 	err = db.Select("table_name, pg_get_constraintdef(oid) primary_key").Table(`information_schema."tables" t`).
 		Joins("INNER JOIN pg_constraint pc ON pc.conrelid::regclass::text = t.table_name", "").
@@ -50,28 +52,48 @@ func main() {
 		panic(err)
 	}
 
+	// remove duplicates collumn
+	uniqueTable := make(map[string]Table)
+	for _, table := range tables {
+		if _, ok := uniqueTable[table.TableName]; ok {
+			continue
+		}
+
+		uniqueTable[table.TableName] = table
+	}
+
 	// clean primary key and generate relation key
 	rgx := regexp.MustCompile("PRIMARY KEY \\((.*)\\)")
 	relationship := make(map[string]string)
-	for i, table := range tables {
+	for name, table := range uniqueTable {
 		pk := rgx.FindStringSubmatch(table.PrimaryKey)[1]
-		tables[i].PrimaryKey = pk
+		table.PrimaryKey = pk
+		uniqueTable[name] = table
 
 		relationship[fmt.Sprintf("%s_%s", table.TableName, pk)] = fmt.Sprintf("%s.%s", table.TableName, pk)
 	}
 
 	res := ""
-	for _, table := range tables {
+	for _, table := range uniqueTable {
 		var schema []TableSchema
 		err = db.Select("*").Table(`information_schema."columns"`).Where("table_name = ?", table.TableName).Find(&schema).Error
 		if err != nil {
 			panic(err)
 		}
 
-		//get primary key
-
-		fields := make([]string, 0)
+		// remove duplicates collumn
+		columns := make(map[string]TableSchema)
 		for _, column := range schema {
+			if _, ok := columns[column.ColumnName]; ok {
+				continue
+			}
+
+			columns[column.ColumnName] = column
+		}
+
+		//get primary key
+		fields := make([]string, 0)
+		for _, column := range columns {
 			field := fmt.Sprintf("\t%s %s", column.ColumnName, column.UdtName)
 			if column.CharacterMaximumLength != nil {
 				field = fmt.Sprintf("%s(%d)", field, *column.CharacterMaximumLength)
