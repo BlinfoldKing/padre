@@ -1,4 +1,5 @@
 # Padre
+simple dbml generator from your postgres connection
 
 ## How to use
 ```bash
